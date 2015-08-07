@@ -115,15 +115,15 @@ type {{ .Name }}Rows []*{{ .Name }}Row
 
 // scan{{ .Name }}Rows scans all rows and retuns an array.
 func scan{{ .Name }}Rows(rows *sql.Rows) ({{ .Name }}Rows, error) {
-	rows := make({{ .Name }}Rows, 0)
+	rs := make({{ .Name }}Rows, 0)
 	for rows.Next() {
 		row, err := scan{{ .Name }}Row(rows)
 		if err != nil {
 			return nil, err
 		}
-		rows = append(rows, row)
+		rs = append(rs, row)
 	}
-	return rows, nil
+	return rs, nil
 }
 
 `
