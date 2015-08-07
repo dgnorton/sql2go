@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
-	"log"
 	"os"
 	"strings"
 
@@ -39,8 +38,10 @@ func main() {
 
 	qry := fmt.Sprintf("SELECT TABLE_NAME FROM %s.INFORMATION_SCHEMA.TABLES", *database)
 	if *tables != "" {
+		*tables = fmt.Sprintf("'%s'", strings.Join(strings.Split(*tables, ","), "','"))
 		qry = fmt.Sprintf("%s WHERE TABLE_NAME IN (%s)", qry, *tables)
 	}
+	fmt.Println(qry)
 	rows, err := db.Query(qry)
 	check(err)
 
@@ -98,7 +99,8 @@ var tableTemplate = template.Must(template.New("struct").Parse(tableTemplateText
 
 var tableTemplateText = `// {{ .Name }}Row represents one row from table {{ .Name }}.
 type {{ .Name }}Row struct {
-	{{range .Columns}}{{ .Name }} {{ .Type }}
+	{{range .Columns}}{{/*
+		*/}}{{ .Name }} {{ .Type }}
 	{{ end }}}
 
 // scan{{ .Name }}Row scans and returns one {{ .Name }}Row.
@@ -130,6 +132,7 @@ func scan{{ .Name }}Rows(rows *sql.Rows) ({{ .Name }}Rows, error) {
 
 func check(err error) {
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		os.Exit(1)
 	}
 }
