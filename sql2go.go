@@ -4,9 +4,10 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
-	"html/template"
+	"io"
 	"os"
 	"strings"
+	"text/template"
 
 	_ "github.com/denisenkom/go-mssqldb"
 )
@@ -30,6 +31,8 @@ func main() {
 	dbConnect := flag.String("dbconnect", "", "database connect string")
 	database := flag.String("database", "", "database name")
 	tables := flag.String("tables", "", "comma delimited list of tables")
+	pkg := flag.String("pkg", "main", "package the generated code will be part of")
+	outfile := flag.String("outfile", "", "output file")
 	flag.Parse()
 
 	db, err := sql.Open(*dbDriver, *dbConnect)
@@ -41,7 +44,6 @@ func main() {
 		*tables = fmt.Sprintf("'%s'", strings.Join(strings.Split(*tables, ","), "','"))
 		qry = fmt.Sprintf("%s WHERE TABLE_NAME IN (%s)", qry, *tables)
 	}
-	fmt.Println(qry)
 	rows, err := db.Query(qry)
 	check(err)
 
@@ -68,7 +70,14 @@ func main() {
 		check(rows.Err())
 	}
 
-	check(genTablesCode(tbls))
+	w := os.Stdout
+	if *outfile != "" {
+		w, err = os.OpenFile(*outfile, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0666)
+		check(err)
+		defer w.Close()
+	}
+
+	check(genTablesCode(w, *pkg, tbls))
 }
 
 func goType(t string) (string, error) {
@@ -82,18 +91,32 @@ func goType(t string) (string, error) {
 	return "", fmt.Errorf("don't know how to convert type: %s", t)
 }
 
-func genTablesCode(tables Tables) error {
+func genTablesCode(w io.Writer, pkg string, tables Tables) error {
+	check(fileHeaderTemplate.Execute(w, pkg))
+
 	for _, t := range tables {
-		if err := genTableCode(t); err != nil {
+		if err := genTableCode(w, t); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func genTableCode(t *Table) error {
-	return tableTemplate.Execute(os.Stdout, t)
+func genTableCode(w io.Writer, t *Table) error {
+	return tableTemplate.Execute(w, t)
 }
+
+var fileHeaderTemplate = template.Must(template.New("file").Parse(fileHeaderTemplateText))
+
+var fileHeaderTemplateText = `// DO NOT EDIT!
+// This file is MACHINE GENERATED
+
+package {{ . }}
+
+import (
+	"database/sql"
+)
+`
 
 var tableTemplate = template.Must(template.New("struct").Parse(tableTemplateText))
 
