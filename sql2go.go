@@ -72,7 +72,7 @@ func main() {
 
 	w := os.Stdout
 	if *outfile != "" {
-		w, err = os.OpenFile(*outfile, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0666)
+		w, err = os.OpenFile(*outfile, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0666)
 		check(err)
 		defer w.Close()
 	}
@@ -81,14 +81,18 @@ func main() {
 }
 
 func goType(t string) (string, error) {
-	if t == "int" || t == "bigint" {
+	switch t {
+	case "int", "bigint":
 		return "int", nil
-	} else if t == "bit" {
+	case "bit":
 		return "bool", nil
-	} else if strings.Contains(t, "char") {
+	case "char", "nchar", "varchar", "nvarchar":
 		return "string", nil
+	case "datetime":
+		return "time.Time", nil
+	default:
+		return "", fmt.Errorf("don't know how to convert type: %s", t)
 	}
-	return "", fmt.Errorf("don't know how to convert type: %s", t)
 }
 
 func genTablesCode(w io.Writer, pkg string, tables Tables) error {
