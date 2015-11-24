@@ -63,7 +63,7 @@ func main() {
 		for rows.Next() {
 			c := &Column{}
 			check(rows.Scan(&c.Name, &c.Type))
-			c.Type, err = goType(c.Type)
+			c.Type, err = goType(c.Type, c.Name, tbl.Name)
 			check(err)
 			tbl.Columns = append(tbl.Columns, c)
 		}
@@ -80,7 +80,7 @@ func main() {
 	check(genTablesCode(w, *pkg, tbls))
 }
 
-func goType(t string) (string, error) {
+func goType(t, columnName, tableName string) (string, error) {
 	switch t {
 	case "int", "bigint":
 		return "int", nil
@@ -91,7 +91,7 @@ func goType(t string) (string, error) {
 	case "datetime":
 		return "time.Time", nil
 	default:
-		return "", fmt.Errorf("don't know how to convert type: %s", t)
+		return "", fmt.Errorf("don't know how to convert type: %s [%s.%s]", t, tableName, columnName)
 	}
 }
 
