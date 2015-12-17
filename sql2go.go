@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"text/template"
+	"unicode"
 
 	_ "github.com/denisenkom/go-mssqldb"
 )
@@ -33,6 +34,7 @@ func main() {
 	tables := flag.String("tables", "", "comma delimited list of tables")
 	pkg := flag.String("pkg", "main", "package the generated code will be part of")
 	outfile := flag.String("outfile", "", "output file")
+	exportFields := flag.Bool("exportfields", true, "upper-case first letter of table column names in generated code")
 	flag.Parse()
 
 	db, err := sql.Open(*dbDriver, *dbConnect)
@@ -65,6 +67,9 @@ func main() {
 			check(rows.Scan(&c.Name, &c.Type))
 			c.Type, err = goType(c.Type, c.Name, tbl.Name)
 			check(err)
+			if *exportFields {
+				c.Name = toUpperFirstChar(c.Name)
+			}
 			tbl.Columns = append(tbl.Columns, c)
 		}
 		check(rows.Err())
@@ -156,6 +161,12 @@ func scan{{ .Name }}Rows(rows *sql.Rows) ({{ .Name }}Rows, error) {
 }
 
 `
+
+func toUpperFirstChar(s string) string {
+	a := []rune(s)
+	a[0] = unicode.ToUpper(a[0])
+	return string(a)
+}
 
 func check(err error) {
 	if err != nil {
