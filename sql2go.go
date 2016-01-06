@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"text/template"
@@ -13,9 +12,17 @@ import (
 	_ "github.com/denisenkom/go-mssqldb"
 )
 
+type TemplateData struct {
+	Package     string
+	Imports     []string
+	DBInterface string
+	Tables      Tables
+}
+
 type Table struct {
 	Name    string
 	Columns Columns
+	RowType string
 }
 
 type Tables []*Table
@@ -35,6 +42,7 @@ func main() {
 	pkg := flag.String("pkg", "main", "package the generated code will be part of")
 	outfile := flag.String("outfile", "", "output file")
 	exportFields := flag.Bool("exportfields", true, "upper-case first letter of table column names in generated code")
+	dbinterface := flag.Bool("dbinterface", false, "generates a DB interface useful for mock tests")
 	flag.Parse()
 
 	db, err := sql.Open(*dbDriver, *dbConnect)
@@ -49,15 +57,27 @@ func main() {
 	rows, err := db.Query(qry)
 	check(err)
 
-	tbls := make(Tables, 0)
+	td := TemplateData{
+		Package: *pkg,
+		Imports: []string{"time"},
+	}
+
+	rowType := "*sql.Rows"
+	if *dbinterface {
+		rowType = "Rows"
+		td.DBInterface = dbInterfaceCode
+	} else {
+		td.Imports = append(td.Imports, "database/sql")
+	}
+
 	for rows.Next() {
-		t := &Table{}
+		t := &Table{RowType: rowType}
 		check(rows.Scan(&t.Name))
-		tbls = append(tbls, t)
+		td.Tables = append(td.Tables, t)
 	}
 	check(rows.Err())
 
-	for _, tbl := range tbls {
+	for _, tbl := range td.Tables {
 		qry = fmt.Sprintf("SELECT COLUMN_NAME, DATA_TYPE FROM %s.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = N'%s'", *database, tbl.Name)
 		rows, err := db.Query(qry)
 		check(err)
@@ -82,7 +102,7 @@ func main() {
 		defer w.Close()
 	}
 
-	check(genTablesCode(w, *pkg, tbls))
+	check(codeTemplate.Execute(w, td))
 }
 
 func goType(t, columnName, tableName string) (string, error) {
@@ -100,43 +120,30 @@ func goType(t, columnName, tableName string) (string, error) {
 	}
 }
 
-func genTablesCode(w io.Writer, pkg string, tables Tables) error {
-	check(fileHeaderTemplate.Execute(w, pkg))
+var codeTemplate = template.Must(template.New("code").Parse(codeTemplateText))
 
-	for _, t := range tables {
-		if err := genTableCode(w, t); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func genTableCode(w io.Writer, t *Table) error {
-	return tableTemplate.Execute(w, t)
-}
-
-var fileHeaderTemplate = template.Must(template.New("file").Parse(fileHeaderTemplateText))
-
-var fileHeaderTemplateText = `// DO NOT EDIT!
+var codeTemplateText = `// DO NOT EDIT!
 // This file is MACHINE GENERATED
 
-package {{ . }}
+package {{ .Package }}
 
 import (
-	"database/sql"
+	{{range .Imports}}{{/*
+		*/}}"{{ . }}"
+	{{ end }}
 )
-`
 
-var tableTemplate = template.Must(template.New("struct").Parse(tableTemplateText))
+{{ .DBInterface }}
 
-var tableTemplateText = `// {{ .Name }}Row represents one row from table {{ .Name }}.
+{{range .Tables}}
+// {{ .Name }}Row represents one row from table {{ .Name }}.
 type {{ .Name }}Row struct {
 	{{range .Columns}}{{/*
 		*/}}{{ .Name }} {{ .Type }}
 	{{ end }}}
 
 // scan{{ .Name }}Row scans and returns one {{ .Name }}Row.
-func scan{{ .Name }}Row(rows *sql.Rows) (*{{ .Name }}Row, error) {
+func scan{{ .Name }}Row(rows {{ .RowType }}) (*{{ .Name }}Row, error) {
 	r := &{{ .Name }}Row{}
 	if err := rows.Scan({{range $i, $e := .Columns}}{{if $i}}, {{end}}&r.{{ $e.Name }}{{ end }}); err != nil {
 		return nil, err
@@ -148,7 +155,7 @@ func scan{{ .Name }}Row(rows *sql.Rows) (*{{ .Name }}Row, error) {
 type {{ .Name }}Rows []*{{ .Name }}Row
 
 // scan{{ .Name }}Rows scans all rows and retuns an array.
-func scan{{ .Name }}Rows(rows *sql.Rows) ({{ .Name }}Rows, error) {
+func scan{{ .Name }}Rows(rows {{ .RowType }}) ({{ .Name }}Rows, error) {
 	rs := make({{ .Name }}Rows, 0)
 	for rows.Next() {
 		row, err := scan{{ .Name }}Row(rows)
@@ -159,8 +166,26 @@ func scan{{ .Name }}Rows(rows *sql.Rows) ({{ .Name }}Rows, error) {
 	}
 	return rs, nil
 }
-
+{{ end }}
 `
+
+var dbInterfaceCode = `// DB is an interface to a database.
+type DB interface {
+	Close() error
+	Query(query string, args ...interface{}) (Rows, error)
+}
+
+type Row interface {
+	Scan(dest ...interface{}) error
+}
+
+type Rows interface {
+	Close() error
+	Columns() ([]string, error)
+	Err() error
+	Next() bool
+	Scan(dest ...interface{}) error
+}`
 
 func toUpperFirstChar(s string) string {
 	a := []rune(s)
