@@ -1,15 +1,11 @@
 package main
 
 import (
-	"database/sql"
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"text/template"
 	"unicode"
-
-	_ "github.com/denisenkom/go-mssqldb"
 )
 
 type TemplateData struct {
@@ -34,6 +30,10 @@ type Column struct {
 
 type Columns []*Column
 
+type SchemaReader interface {
+	ReadTablesSchema(database, tables string) (Tables, error)
+}
+
 func main() {
 	dbDriver := flag.String("driver", "mssql", "database driver")
 	dbConnect := flag.String("dbconnect", "", "database connect string")
@@ -45,55 +45,30 @@ func main() {
 	dbinterface := flag.Bool("dbinterface", false, "generates a DB interface useful for mock tests")
 	flag.Parse()
 
-	db, err := sql.Open(*dbDriver, *dbConnect)
-	check(err)
-	defer db.Close()
-
-	qry := fmt.Sprintf("SELECT TABLE_NAME FROM %s.INFORMATION_SCHEMA.TABLES", *database)
-	if *tables != "" {
-		*tables = fmt.Sprintf("'%s'", strings.Join(strings.Split(*tables, ","), "','"))
-		qry = fmt.Sprintf("%s WHERE TABLE_NAME IN (%s)", qry, *tables)
-	}
-	rows, err := db.Query(qry)
-	check(err)
-
 	td := TemplateData{
 		Package: *pkg,
 		Imports: []string{"time"},
 	}
 
-	rowType := "*sql.Rows"
 	if *dbinterface {
-		rowType = "Rows"
 		td.DBInterface = dbInterfaceCode
 	} else {
 		td.Imports = append(td.Imports, "database/sql")
 	}
 
-	for rows.Next() {
-		t := &Table{RowType: rowType}
-		check(rows.Scan(&t.Name))
-		td.Tables = append(td.Tables, t)
+	var r SchemaReader
+	switch *dbDriver {
+	case "mssql":
+		r = NewSQLServerSchemaReader(*dbConnect, *exportFields, *dbinterface)
+	case "mysql":
+		r = NewMySQLSchemaReader(*dbConnect, *exportFields, *dbinterface)
+	default:
+		check(fmt.Errorf("unsupported DB driver: %s", *dbDriver))
 	}
-	check(rows.Err())
 
-	for _, tbl := range td.Tables {
-		qry = fmt.Sprintf("SELECT COLUMN_NAME, DATA_TYPE FROM %s.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = N'%s'", *database, tbl.Name)
-		rows, err := db.Query(qry)
-		check(err)
-
-		for rows.Next() {
-			c := &Column{}
-			check(rows.Scan(&c.Name, &c.Type))
-			c.Type, err = goType(c.Type, c.Name, tbl.Name)
-			check(err)
-			if *exportFields {
-				c.Name = toUpperFirstChar(c.Name)
-			}
-			tbl.Columns = append(tbl.Columns, c)
-		}
-		check(rows.Err())
-	}
+	tt, err := r.ReadTablesSchema(*database, *tables)
+	check(err)
+	td.Tables = tt
 
 	w := os.Stdout
 	if *outfile != "" {
@@ -103,21 +78,6 @@ func main() {
 	}
 
 	check(codeTemplate.Execute(w, td))
-}
-
-func goType(t, columnName, tableName string) (string, error) {
-	switch t {
-	case "int", "bigint":
-		return "int", nil
-	case "bit":
-		return "bool", nil
-	case "char", "nchar", "varchar", "nvarchar":
-		return "string", nil
-	case "datetime":
-		return "time.Time", nil
-	default:
-		return "", fmt.Errorf("don't know how to convert type: %s [%s.%s]", t, tableName, columnName)
-	}
 }
 
 var codeTemplate = template.Must(template.New("code").Parse(codeTemplateText))
