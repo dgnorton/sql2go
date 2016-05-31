@@ -58,6 +58,8 @@ func (r *SQLServerSchemaReader) ReadTablesSchema(database, tables string) (Table
 		}
 
 		t.Columns = cc
+
+		tt = append(tt, t)
 	}
 
 	if rows.Err() != nil {
